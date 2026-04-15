@@ -52,11 +52,12 @@ def create_refresh_token(user_id: str) -> str:
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 async def get_current_user(request: Request) -> dict:
-    token = request.cookies.get("access_token")
+    token = None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
     if not token:
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
+        token = request.cookies.get("access_token")
     if not token:
         raise HTTPException(status_code=401, detail="Non autenticato")
     try:
@@ -112,6 +113,13 @@ class ExerciseGenInput(BaseModel):
     category: Optional[str] = "generale"
     num_players: Optional[int] = 10
 
+class PaymentConfirmInput(BaseModel):
+    user_id: str
+    
+class CoursePriceInput(BaseModel):
+    price: float
+    currency: Optional[str] = "EUR"
+
 # Create the main app
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
@@ -139,13 +147,10 @@ async def register(input: RegisterInput):
     access_token = create_access_token(user_id, email)
     refresh_token = create_refresh_token(user_id)
     
-    from starlette.responses import JSONResponse
-    response = JSONResponse(content={
-        "id": user_id, "email": email, "name": input.name, "role": "student"
-    })
-    response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=7200, path="/")
-    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
-    return response
+    return {
+        "id": user_id, "email": email, "name": input.name, "role": "student",
+        "access_token": access_token, "refresh_token": refresh_token
+    }
 
 @api_router.post("/auth/login")
 async def login(input: LoginInput):
@@ -158,13 +163,10 @@ async def login(input: LoginInput):
     access_token = create_access_token(user_id, email)
     refresh_token = create_refresh_token(user_id)
     
-    from starlette.responses import JSONResponse
-    response = JSONResponse(content={
-        "id": user_id, "email": email, "name": user.get("name", ""), "role": user.get("role", "student")
-    })
-    response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=7200, path="/")
-    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
-    return response
+    return {
+        "id": user_id, "email": email, "name": user.get("name", ""), "role": user.get("role", "student"),
+        "access_token": access_token, "refresh_token": refresh_token
+    }
 
 @api_router.get("/auth/me")
 async def get_me(request: Request):
@@ -173,15 +175,14 @@ async def get_me(request: Request):
 
 @api_router.post("/auth/logout")
 async def logout():
-    from starlette.responses import JSONResponse
-    response = JSONResponse(content={"message": "Logout effettuato"})
-    response.delete_cookie("access_token", path="/")
-    response.delete_cookie("refresh_token", path="/")
-    return response
+    return {"message": "Logout effettuato"}
 
 @api_router.post("/auth/refresh")
 async def refresh_token(request: Request):
-    token = request.cookies.get("refresh_token")
+    auth_header = request.headers.get("Authorization", "")
+    token = None
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
     if not token:
         raise HTTPException(status_code=401, detail="Nessun refresh token")
     try:
@@ -193,10 +194,7 @@ async def refresh_token(request: Request):
             raise HTTPException(status_code=401, detail="Utente non trovato")
         user_id = str(user["_id"])
         access_token = create_access_token(user_id, user["email"])
-        from starlette.responses import JSONResponse
-        response = JSONResponse(content={"message": "Token rinnovato"})
-        response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=7200, path="/")
-        return response
+        return {"access_token": access_token}
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Refresh token non valido")
 
@@ -461,11 +459,9 @@ async def get_students(request: Request):
     user = await get_current_user(request)
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Accesso non autorizzato")
-    students = await db.users.find({"role": "student"}, {"_id": 0, "password_hash": 0}).to_list(100)
-    # Convert ObjectId if present
+    students = await db.users.find({"role": "student"}, {"password_hash": 0}).to_list(100)
     for s in students:
-        if "_id" in s:
-            s["_id"] = str(s["_id"])
+        s["_id"] = str(s["_id"])
     return students
 
 @api_router.get("/admin/stats")
@@ -485,6 +481,240 @@ async def get_admin_stats(request: Request):
         "total_exercises": total_exercises,
         "total_chat_messages": total_chats
     }
+
+# ==================== PAYMENT ROUTES ====================
+
+COURSE_PRICE = 49.00  # Prezzo del corso in EUR
+PAYPAL_EMAIL = os.environ.get("PAYPAL_EMAIL", "latuafrica@gmail.com")
+
+@api_router.get("/payment/info")
+async def get_payment_info():
+    """Info corso e prezzo - pubblico"""
+    return {
+        "price": COURSE_PRICE,
+        "currency": "EUR",
+        "paypal_email": PAYPAL_EMAIL,
+        "description": "Corso Periodizzazione Tattica & Calcio Relazionale - Accesso Completo"
+    }
+
+@api_router.get("/payment/status")
+async def get_payment_status(request: Request):
+    """Verifica se l'utente ha pagato"""
+    user = await get_current_user(request)
+    if user.get("role") == "admin":
+        return {"has_paid": True, "role": "admin"}
+    full_user = await db.users.find_one({"_id": ObjectId(user["_id"])})
+    return {"has_paid": full_user.get("has_paid", False)}
+
+@api_router.post("/payment/record")
+async def record_payment(request: Request):
+    """L'utente registra il pagamento PayPal effettuato"""
+    user = await get_current_user(request)
+    body = await request.json()
+    transaction_id = body.get("transaction_id", "")
+    
+    await db.payments.insert_one({
+        "user_id": user["_id"],
+        "user_email": user.get("email", ""),
+        "user_name": user.get("name", ""),
+        "amount": COURSE_PRICE,
+        "currency": "EUR",
+        "transaction_id": transaction_id,
+        "status": "pending_verification",
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    # Auto-approve PayPal payments (l'istruttore puo revocare dal pannello admin)
+    await db.users.update_one(
+        {"_id": ObjectId(user["_id"])},
+        {"$set": {"has_paid": True, "paid_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    
+    return {"message": "Pagamento registrato! Accesso completo attivato.", "has_paid": True}
+
+@api_router.post("/admin/payment/confirm")
+async def admin_confirm_payment(input: PaymentConfirmInput, request: Request):
+    """Admin conferma/attiva manualmente un pagamento"""
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Solo l'istruttore")
+    await db.users.update_one(
+        {"_id": ObjectId(input.user_id)},
+        {"$set": {"has_paid": True, "paid_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    return {"message": "Accesso attivato per l'allievo"}
+
+@api_router.post("/admin/payment/revoke")
+async def admin_revoke_payment(input: PaymentConfirmInput, request: Request):
+    """Admin revoca l'accesso"""
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Solo l'istruttore")
+    await db.users.update_one(
+        {"_id": ObjectId(input.user_id)},
+        {"$set": {"has_paid": False}}
+    )
+    return {"message": "Accesso revocato"}
+
+@api_router.get("/admin/payments")
+async def get_all_payments(request: Request):
+    """Admin vede tutti i pagamenti"""
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Solo l'istruttore")
+    payments = await db.payments.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return payments
+
+@api_router.post("/admin/course-price")
+async def update_course_price(input: CoursePriceInput, request: Request):
+    """Admin aggiorna il prezzo del corso"""
+    user = await get_current_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Solo l'istruttore")
+    global COURSE_PRICE
+    COURSE_PRICE = input.price
+    await db.settings.update_one(
+        {"key": "course_price"}, 
+        {"$set": {"value": input.price, "currency": input.currency}},
+        upsert=True
+    )
+    return {"message": f"Prezzo aggiornato a {input.price} {input.currency}"}
+
+# ==================== LESSON ACCESS CONTROL ====================
+
+@api_router.get("/lessons/{lesson_id}/access")
+async def check_lesson_access(lesson_id: str, request: Request):
+    """Verifica se l'utente puo accedere alla lezione"""
+    try:
+        user = await get_current_user(request)
+        if user.get("role") == "admin":
+            return {"can_access": True, "reason": "admin"}
+        full_user = await db.users.find_one({"_id": ObjectId(user["_id"])})
+        if full_user.get("has_paid", False):
+            return {"can_access": True, "reason": "paid"}
+    except HTTPException:
+        user = None
+    
+    # Check if it's a free lesson (first lesson of each module, order == 1)
+    lesson = await db.lessons.find_one({"id": lesson_id}, {"_id": 0})
+    if lesson and lesson.get("order") == 1:
+        return {"can_access": True, "reason": "free_preview"}
+    
+    return {"can_access": False, "reason": "payment_required"}
+
+# ==================== PDF CERTIFICATE ====================
+
+@api_router.get("/certificate/download")
+async def download_certificate(request: Request):
+    """Genera e scarica il certificato PDF di completamento"""
+    user = await get_current_user(request)
+    
+    # Check if all lessons are completed
+    total_lessons = await db.lessons.count_documents({})
+    completed = await db.progress.count_documents({"user_id": user["_id"]})
+    
+    if completed < total_lessons and user.get("role") != "admin":
+        raise HTTPException(status_code=400, detail=f"Devi completare tutte le lezioni ({completed}/{total_lessons})")
+    
+    from fpdf import FPDF
+    import io
+    
+    pdf = FPDF(orientation='L', unit='mm', format='A4')
+    pdf.add_page()
+    
+    # Background
+    pdf.set_fill_color(10, 10, 10)
+    pdf.rect(0, 0, 297, 210, 'F')
+    
+    # Gold border
+    pdf.set_draw_color(212, 175, 55)
+    pdf.set_line_width(2)
+    pdf.rect(10, 10, 277, 190)
+    pdf.set_line_width(0.5)
+    pdf.rect(14, 14, 269, 182)
+    
+    # Inner decorative lines
+    pdf.set_draw_color(212, 175, 55)
+    pdf.set_line_width(0.3)
+    pdf.line(30, 50, 267, 50)
+    pdf.line(30, 160, 267, 160)
+    
+    # Title
+    pdf.set_text_color(212, 175, 55)
+    pdf.set_font('Helvetica', 'B', 14)
+    pdf.set_y(25)
+    pdf.cell(0, 10, 'ACCADEMIA ALLENATORI', align='C')
+    
+    pdf.set_font('Helvetica', '', 28)
+    pdf.set_y(55)
+    pdf.cell(0, 15, 'CERTIFICATO DI COMPLETAMENTO', align='C')
+    
+    # Subtitle
+    pdf.set_text_color(200, 200, 200)
+    pdf.set_font('Helvetica', '', 12)
+    pdf.set_y(75)
+    pdf.cell(0, 8, 'Si attesta che', align='C')
+    
+    # Name
+    pdf.set_text_color(212, 175, 55)
+    pdf.set_font('Helvetica', 'B', 32)
+    pdf.set_y(88)
+    pdf.cell(0, 15, user.get("name", "Allievo"), align='C')
+    
+    # Course info
+    pdf.set_text_color(200, 200, 200)
+    pdf.set_font('Helvetica', '', 12)
+    pdf.set_y(110)
+    pdf.cell(0, 8, 'ha completato con successo il percorso formativo', align='C')
+    
+    pdf.set_text_color(212, 175, 55)
+    pdf.set_font('Helvetica', 'B', 18)
+    pdf.set_y(122)
+    pdf.cell(0, 12, 'Periodizzazione Tattica & Calcio Relazionale', align='C')
+    
+    # Details
+    pdf.set_text_color(160, 160, 160)
+    pdf.set_font('Helvetica', '', 10)
+    pdf.set_y(138)
+    pdf.cell(0, 6, f'7 Moduli - {total_lessons} Lezioni - Esercitazioni Pratiche - Assistente AI', align='C')
+    
+    # Date and signature
+    today = datetime.now(timezone.utc).strftime("%d/%m/%Y")
+    pdf.set_text_color(200, 200, 200)
+    pdf.set_font('Helvetica', '', 11)
+    pdf.set_y(165)
+    pdf.cell(148, 8, f'Data: {today}', align='R')
+    pdf.cell(148, 8, 'L\'Istruttore', align='L')
+    
+    # Quote
+    pdf.set_text_color(212, 175, 55)
+    pdf.set_font('Helvetica', 'I', 9)
+    pdf.set_y(180)
+    pdf.cell(0, 6, '"Finche c\'e gioia, c\'e corso. I principi non si cambiano, si trasformano."', align='C')
+    
+    # Generate PDF bytes
+    pdf_bytes = pdf.output()
+    
+    from starlette.responses import Response
+    return Response(
+        content=bytes(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=Certificato_PT_{user.get('name', 'Allievo').replace(' ', '_')}.pdf"}
+    )
+
+# ==================== PUBLIC ROUTES (no auth needed) ====================
+
+@api_router.get("/public/modules")
+async def get_public_modules():
+    """Moduli visibili a tutti con preview della prima lezione"""
+    modules = await db.modules.find({}, {"_id": 0}).sort("order", 1).to_list(100)
+    for mod in modules:
+        lessons = await db.lessons.find({"module_id": mod["id"]}, {"_id": 0}).sort("order", 1).to_list(100)
+        mod["total_lessons"] = len(lessons)
+        # Include only first lesson as free preview
+        mod["free_lesson"] = lessons[0] if lessons else None
+        mod["lesson_titles"] = [{"id": l["id"], "title": l["title"], "order": l["order"], "is_free": l["order"] == 1} for l in lessons]
+    return modules
 
 # ==================== VIDEO UPLOAD ====================
 
@@ -570,6 +800,11 @@ async def startup():
     await create_indexes()
     await seed_admin()
     await seed_content()
+    # Load course price from DB
+    global COURSE_PRICE
+    price_setting = await db.settings.find_one({"key": "course_price"})
+    if price_setting:
+        COURSE_PRICE = price_setting.get("value", 49.00)
     # Write test credentials
     os.makedirs("/app/memory", exist_ok=True)
     with open("/app/memory/test_credentials.md", "w") as f:

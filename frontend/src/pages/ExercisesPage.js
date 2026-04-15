@@ -120,7 +120,7 @@ export default function ExercisesPage() {
   useEffect(() => {
     const fetchExercises = async () => {
       try {
-        const { data } = await axios.get(`${API}/exercises`, { withCredentials: true });
+        const { data } = await axios.get(`${API}/exercises`);
         setExercises(data);
       } catch (err) {
         console.error(err);

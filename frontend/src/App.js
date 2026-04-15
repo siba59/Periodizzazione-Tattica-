@@ -10,6 +10,7 @@ import LessonPage from "./pages/LessonPage";
 import ExercisesPage from "./pages/ExercisesPage";
 import AiChatPage from "./pages/AiChatPage";
 import AdminPage from "./pages/AdminPage";
+import PaymentPage from "./pages/PaymentPage";
 
 function ProtectedRoute({ children, adminOnly = false }) {
   const { user, loading } = useAuth();
@@ -37,6 +38,7 @@ function AppRoutes() {
       <Route path="/lessons/:lessonId" element={<ProtectedRoute><LessonPage /></ProtectedRoute>} />
       <Route path="/exercises" element={<ProtectedRoute><ExercisesPage /></ProtectedRoute>} />
       <Route path="/ai-chat" element={<ProtectedRoute><AiChatPage /></ProtectedRoute>} />
+      <Route path="/payment" element={<ProtectedRoute><PaymentPage /></ProtectedRoute>} />
       <Route path="/admin" element={<ProtectedRoute adminOnly><AdminPage /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

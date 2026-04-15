@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import axios from 'axios';
-import { BookOpen, MessageCircle, Dumbbell, BarChart3, LogOut, ChevronRight, Sparkles, Settings } from 'lucide-react';
+import { BookOpen, MessageCircle, Dumbbell, BarChart3, LogOut, ChevronRight, Sparkles, Settings, Award, CreditCard, Download } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -11,17 +11,20 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const [modules, setModules] = useState([]);
   const [progressData, setProgressData] = useState(null);
+  const [hasPaid, setHasPaid] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [modRes, progRes] = await Promise.all([
-          axios.get(`${API}/modules`, { withCredentials: true }),
-          axios.get(`${API}/progress/summary`, { withCredentials: true }).catch(() => ({ data: null }))
+        const [modRes, progRes, payRes] = await Promise.all([
+          axios.get(`${API}/modules`),
+          axios.get(`${API}/progress/summary`).catch(() => ({ data: null })),
+          axios.get(`${API}/payment/status`).catch(() => ({ data: { has_paid: false } }))
         ]);
         setModules(modRes.data);
         setProgressData(progRes.data);
+        setHasPaid(payRes.data?.has_paid || false);
       } catch (err) {
         console.error(err);
       } finally {
@@ -77,6 +80,11 @@ export default function DashboardPage() {
           {user?.role === 'admin' && (
             <button data-testid="nav-admin" onClick={() => navigate('/admin')} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors hover:bg-white/5" style={{ color: '#A1A1AA' }}>
               <Settings size={18} /> Admin
+            </button>
+          )}
+          {!hasPaid && user?.role !== 'admin' && (
+            <button data-testid="nav-payment" onClick={() => navigate('/payment')} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors mt-2" style={{ color: '#D4AF37', background: 'rgba(212, 175, 55, 0.06)', border: '1px solid rgba(212, 175, 55, 0.15)' }}>
+              <CreditCard size={18} /> Sblocca Corso
             </button>
           )}
         </nav>
@@ -156,7 +164,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Quick Actions */}
-        <div className="grid md:grid-cols-2 gap-5 mt-8">
+        <div className="grid md:grid-cols-3 gap-5 mt-8">
           <div
             data-testid="quick-ai-chat"
             onClick={() => navigate('/ai-chat')}
@@ -168,7 +176,7 @@ export default function DashboardPage() {
               </div>
               <div>
                 <h3 className="text-base font-medium" style={{ color: '#EAEAEA' }}>Chiedi al Maestro</h3>
-                <p className="text-sm" style={{ color: '#71717A' }}>L'assistente AI della Periodizzazione Tattica</p>
+                <p className="text-sm" style={{ color: '#71717A' }}>Assistente AI della PT</p>
               </div>
             </div>
           </div>
@@ -183,7 +191,35 @@ export default function DashboardPage() {
               </div>
               <div>
                 <h3 className="text-base font-medium" style={{ color: '#EAEAEA' }}>Genera Esercitazioni</h3>
-                <p className="text-sm" style={{ color: '#71717A' }}>Crea esercizi basati sui principi PT con l'AI</p>
+                <p className="text-sm" style={{ color: '#71717A' }}>Crea esercizi con l'AI</p>
+              </div>
+            </div>
+          </div>
+          <div
+            data-testid="quick-certificate"
+            onClick={async () => {
+              try {
+                const response = await axios.get(`${API}/certificate/download`, { responseType: 'blob' });
+                const url = window.URL.createObjectURL(new Blob([response.data]));
+                const link = document.createElement('a');
+                link.href = url;
+                link.setAttribute('download', 'Certificato_PT.pdf');
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+              } catch (err) {
+                alert(err.response?.data?.detail || 'Completa tutte le lezioni per il certificato');
+              }
+            }}
+            className="card-dark rounded-xl p-6 cursor-pointer group"
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: 'rgba(212, 175, 55, 0.1)' }}>
+                <Award size={22} style={{ color: '#D4AF37' }} />
+              </div>
+              <div>
+                <h3 className="text-base font-medium" style={{ color: '#EAEAEA' }}>Certificato PDF</h3>
+                <p className="text-sm" style={{ color: '#71717A' }}>Scarica al completamento</p>
               </div>
             </div>
           </div>

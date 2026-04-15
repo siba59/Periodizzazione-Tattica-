@@ -10,7 +10,7 @@ import json
 from datetime import datetime
 
 class TacticalPeriodizationAPITester:
-    def __init__(self, base_url="https://tactical-harmony.preview.emergentagent.com/api"):
+    def __init__(self, base_url="https://3030cbf5-4104-489c-aa99-8317c58e9b2e.preview.emergentagent.com/api"):
         self.base_url = base_url
         self.session = requests.Session()
         self.admin_token = None
@@ -216,6 +216,111 @@ class TacticalPeriodizationAPITester:
             description="AI Chat (No Auth - Should Fail)"
         )
 
+    def test_payment_endpoints(self):
+        """Test payment-related endpoints"""
+        print("\n💳 Testing Payment Endpoints...")
+        
+        # Test payment info (public endpoint)
+        success, response = self.test_endpoint(
+            'GET', 'payment/info', 200,
+            description="Get Payment Info (Public)"
+        )
+        
+        if success and response:
+            try:
+                payment_info = response.json()
+                expected_price = 49.0
+                expected_email = "latuafrica@gmail.com"
+                
+                if payment_info.get('price') == expected_price:
+                    self.log_test("Payment Price Correct", True, f"Price: {payment_info.get('price')} EUR")
+                else:
+                    self.log_test("Payment Price Correct", False, f"Expected {expected_price}, got {payment_info.get('price')}")
+                
+                if payment_info.get('paypal_email') == expected_email:
+                    self.log_test("PayPal Email Correct", True, f"Email: {payment_info.get('paypal_email')}")
+                else:
+                    self.log_test("PayPal Email Correct", False, f"Expected {expected_email}, got {payment_info.get('paypal_email')}")
+                    
+            except Exception as e:
+                self.log_test("Payment Info Parsing", False, str(e))
+        
+        # Test payment status (requires auth)
+        success, response = self.test_endpoint(
+            'GET', 'payment/status', 401,  # Should fail without auth
+            description="Payment Status (No Auth - Should Fail)"
+        )
+
+    def test_lesson_access_endpoints(self):
+        """Test lesson access control"""
+        print("\n🔒 Testing Lesson Access Control...")
+        
+        # First get a lesson ID
+        success, response = self.test_endpoint('GET', 'modules', 200, description="Get Modules for Access Test")
+        
+        if success and response:
+            try:
+                modules = response.json()
+                if modules and len(modules) > 0:
+                    module_id = modules[0].get('id')
+                    
+                    # Get lessons for this module
+                    lesson_success, lesson_response = self.test_endpoint(
+                        'GET', f'modules/{module_id}/lessons', 200,
+                        description="Get Lessons for Access Test"
+                    )
+                    
+                    if lesson_success and lesson_response:
+                        lessons = lesson_response.json()
+                        if lessons and len(lessons) > 0:
+                            lesson_id = lessons[0].get('id')
+                            
+                            # Test lesson access (should work for free lessons)
+                            self.test_endpoint(
+                                'GET', f'lessons/{lesson_id}/access', 200,
+                                description=f"Check Access for Lesson {lesson_id}"
+                            )
+            except Exception as e:
+                self.log_test("Lesson Access Test Setup", False, str(e))
+
+    def test_public_endpoints(self):
+        """Test public endpoints"""
+        print("\n🌐 Testing Public Endpoints...")
+        
+        # Test public modules
+        success, response = self.test_endpoint(
+            'GET', 'public/modules', 200,
+            description="Get Public Modules"
+        )
+        
+        if success and response:
+            try:
+                modules = response.json()
+                if isinstance(modules, list):
+                    self.log_test("Public Modules Available", True, f"Found {len(modules)} public modules")
+                    
+                    # Check if modules have free lesson info
+                    if modules and len(modules) > 0:
+                        first_module = modules[0]
+                        if 'free_lesson' in first_module:
+                            self.log_test("Free Lesson Info Present", True)
+                        else:
+                            self.log_test("Free Lesson Info Present", False, "No free_lesson field")
+                else:
+                    self.log_test("Public Modules Available", False, "Invalid response format")
+            except Exception as e:
+                self.log_test("Public Modules Parsing", False, str(e))
+
+    def test_certificate_endpoint(self):
+        """Test certificate download endpoint"""
+        print("\n🏆 Testing Certificate Endpoint...")
+        
+        # Test certificate download (requires auth and completion)
+        success, response = self.test_endpoint(
+            'GET', 'certificate/download', 401,  # Should fail without auth
+            description="Certificate Download (No Auth - Should Fail)"
+        )
+
     def test_admin_endpoints(self):
         """Test admin-only endpoints"""
         print("\n👑 Testing Admin Endpoints...")
@@ -230,6 +335,12 @@ class TacticalPeriodizationAPITester:
         success, response = self.test_endpoint(
             'GET', 'admin/students', 401,  # Should fail without auth
             description="Admin Students (No Auth - Should Fail)"
+        )
+        
+        # Test admin payments (requires admin auth)
+        success, response = self.test_endpoint(
+            'GET', 'admin/payments', 401,  # Should fail without auth
+            description="Admin Payments (No Auth - Should Fail)"
         )
 
     def test_auth_endpoints(self):
@@ -258,6 +369,12 @@ class TacticalPeriodizationAPITester:
         self.test_modules_api()
         self.test_lessons_api()
         self.test_exercises_api()
+        self.test_public_endpoints()
+        
+        # Test payment endpoints
+        self.test_payment_endpoints()
+        self.test_lesson_access_endpoints()
+        self.test_certificate_endpoint()
         
         # Test auth endpoints
         self.test_auth_endpoints()

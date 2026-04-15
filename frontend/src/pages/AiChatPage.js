@@ -66,7 +66,7 @@ function ChatPanel() {
     setLoading(true);
 
     try {
-      const { data } = await axios.post(`${API}/ai/chat`, { message: userMsg, session_id: sessionId }, { withCredentials: true });
+      const { data } = await axios.post(`${API}/ai/chat`, { message: userMsg, session_id: sessionId });
       setMessages(prev => [...prev, { role: 'assistant', content: data.response }]);
     } catch (err) {
       setMessages(prev => [...prev, { role: 'assistant', content: 'Mi dispiace, si e verificato un errore. Riprova tra un momento.' }]);
@@ -174,7 +174,7 @@ function GeneratePanel() {
         principle: principle.trim(),
         category,
         num_players: numPlayers
-      }, { withCredentials: true });
+      });
       setResult(data.exercise);
     } catch (err) {
       setResult({ error: 'Errore nella generazione. Riprova.' });
