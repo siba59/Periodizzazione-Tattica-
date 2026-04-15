@@ -1,0 +1,95 @@
+{
+  "theme": "dark",
+  "archetype": "5 (Jewel & Luxury)",
+  "emotional_tone": "Philosophical, Empathetic, Authoritative, Premium, Human",
+  "colors": {
+    "background": {
+      "base": "#050505",
+      "surface": "#121212",
+      "surface_elevated": "#1A1A1A"
+    },
+    "primary": {
+      "DEFAULT": "#D4AF37",
+      "hover": "#F3E5AB",
+      "glow": "rgba(212, 175, 55, 0.4)"
+    },
+    "secondary": {
+      "DEFAULT": "#1E1E1E",
+      "hover": "#2C2C2C"
+    },
+    "text": {
+      "primary": "#EAEAEA",
+      "secondary": "#A1A1AA",
+      "muted": "#71717A",
+      "gold_accent": "#D4AF37"
+    },
+    "border": {
+      "default": "#27272A",
+      "gold_subtle": "rgba(212, 175, 55, 0.2)"
+    }
+  },
+  "typography": {
+    "headings": {
+      "family": "'Cormorant Garamond', serif",
+      "weights": ["300", "400", "600"],
+      "usage": "H1, H2, H3, Hero statements, Philosophical quotes",
+      "styles": "tracking-tight, leading-none"
+    },
+    "body": {
+      "family": "'Outfit', sans-serif",
+      "weights": ["300", "400", "500"],
+      "usage": "Paragraphs, Dashboard data, UI elements, Navigation",
+      "styles": "tracking-normal, leading-relaxed"
+    },
+    "mono": {
+      "family": "'JetBrains Mono', monospace",
+      "usage": "Tactical stats, module numbers, small metrics"
+    }
+  },
+  "layout": {
+    "spacing_system": "Generous spacing. Use p-8, p-12, p-16 for structural sections. Containers must have internal padding.",
+    "bento_grid": "Use asymmetrical 'Tetris' grid for Marketing/Landing sections and 'Control Room' grid for Student Dashboard.",
+    "alignment": "Left-align dense text and dashboard components. Center-align hero quotes and philosophical milestones."
+  },
+  "components_instructions": {
+    "buttons": "Primary buttons: bg-[#D4AF37] text-black font-semibold rounded-md hover:bg-[#F3E5AB] transition-all. Secondary: border border-[#D4AF37] text-[#D4AF37] bg-transparent hover:bg-[#D4AF37]/10.",
+    "cards": "Flat background (#111), 1px subtle border (#27272A). On hover: elevate slightly (-translate-y-1) and change border to gold_subtle with a soft shadow shadow-[0_4px_20px_rgba(212,175,55,0.05)].",
+    "glassmorphism": "Used only for sticky headers/floating nav: bg-[#050505]/60 backdrop-blur-xl border-b border-white/10.",
+    "tactical_diagrams": "Render field diagrams using SVG on a very dark green or black pitch background. Use gold (#D4AF37) for lines and interactive player nodes. Nodes should have a subtle pulse animation.",
+    "ai_chat": "Chat interface should look like a premium messaging app. User messages in muted gray bubbles, AI (Instructor) messages in black bubbles with gold borders. Use a serif font for the AI's philosophical responses to give it 'voice'."
+  },
+  "media": {
+    "hero_background": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/79b1bef3-9937-45cc-8e8f-538170a59c92/images/65e59157b75f0b98600d20732d39a355806fd702b030dc5f4af25209286f2d54.png",
+      "description": "Cinematic abstract background of a football pitch drawn in glowing gold lines"
+    },
+    "philosophical_stadium": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/79b1bef3-9937-45cc-8e8f-538170a59c92/images/38998ff1a2f52cde95d3e627a185c5bb155473db477614069e71b3157495a4e8.png",
+      "description": "A majestic, empty football stadium at night illuminated by a single warm golden spotlight"
+    },
+    "tactical_board": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/79b1bef3-9937-45cc-8e8f-538170a59c92/images/fd8f219052d4c8a40da53d83793d471c26364855245c94b7cb39a15d3fe029fe.png",
+      "description": "Close up of a football coach's hands moving gold tactile pieces"
+    },
+    "real_coach_stadium_night_1": {
+      "url": "https://images.unsplash.com/photo-1711812176441-59f8414cf8f6?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwzfHxmb290YmFsbCUyMGNvYWNoJTIwdGFjdGljYWwlMjBuaWdodHxlbnwwfHx8fDE3NzYyNTI1Nzh8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Group of people on a soccer field at night, great for 'about us' or 'community' section"
+    },
+    "real_coach_stadium_night_2": {
+      "url": "https://images.unsplash.com/photo-1611054414316-253b87e53570?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwyfHxmb290YmFsbCUyMGNvYWNoJTIwdGFjdGljYWwlMjBuaWdodHxlbnwwfHx8fDE3NzYyNTI1Nzh8MA&ixlib=rb-4.1.0&q=85",
+      "description": "People standing on green grass field during night time, ambient lighting"
+    }
+  },
+  "instructions_to_main_agent": [
+    "IMPORTANT: Setup Tailwind config to include the custom colors and fonts defined above.",
+    "Install and use `@phosphor-icons/react` for elegant, thin-line duotone icons that match the premium feel.",
+    "Use Shadcn UI components but override their default borders and backgrounds. Remove generic styling. Elements should be flat black with subtle #27272A or gold borders.",
+    "For the AI Chat, use Shadcn Card and ScrollArea, but style the messages to feel like an academic/philosophical dialogue (AI uses serif font).",
+    "For the Tactical Diagrams, use pure HTML/SVG drawn with gold lines against a dark background.",
+    "Every interactive element MUST have a `data-testid` attribute for testing.",
+    "Ensure all Italian text is correctly encoded and grammatically appropriate for a philosophical coaching context (e.g., using terms like 'Periodizzazione Tattica', 'Il Modello di Gioco').",
+    "Add 'Cormorant Garamond' and 'Outfit' to Google Fonts import in index.css or via Next.js fonts.",
+    "Do NOT use 'Inter' font. Use Outfit for sans-serif body text.",
+    "Avoid standard blue/teal accents. All active/focus states MUST be gold (#D4AF37)."
+  ]
+}
