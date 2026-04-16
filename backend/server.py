@@ -6,18 +6,20 @@ load_dotenv(ROOT_DIR / '.env')
 
 from fastapi import FastAPI, APIRouter, HTTPException, Request, UploadFile, File
 from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import FileResponse, Response
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 import os
 import logging
 import uuid
+import json
 import bcrypt
 import jwt
-import secrets
 import aiofiles
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field
 from typing import List, Optional
+from fpdf import FPDF
 from seed_data import MODULES, EXERCISES
 
 # Configure logging
@@ -319,7 +321,7 @@ async def get_progress_summary(request: Request):
     module_progress = []
     for m in modules:
         m_lessons = await db.lessons.find({"module_id": m["id"]}, {"_id": 0}).to_list(100)
-        m_completed = sum(1 for l in m_lessons if l["id"] in completed_ids)
+        m_completed = sum(1 for les in m_lessons if les["id"] in completed_ids)
         module_progress.append({
             "module_id": m["id"],
             "module_title": m["title"],
@@ -336,19 +338,7 @@ async def get_progress_summary(request: Request):
 
 # ==================== AI CHAT ROUTES ====================
 
-@api_router.post("/ai/chat")
-async def ai_chat(input: ChatInput, request: Request):
-    user = await get_current_user(request)
-    session_id = input.session_id or str(uuid.uuid4())
-    
-    try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        
-        api_key = os.environ.get("EMERGENT_LLM_KEY")
-        if not api_key:
-            raise HTTPException(status_code=500, detail="Chiave AI non configurata")
-        
-        system_msg = """Sei il Maestro della Periodizzazione Tattica e del Calcio Relazionale. 
+PT_SYSTEM_MESSAGE = """Sei il Maestro della Periodizzazione Tattica e del Calcio Relazionale. 
 Rispondi sempre in italiano con empatia e profondita filosofica.
 Collega sempre i concetti del calcio alla vita, ai sistemi complessi, all'armonia musicale.
 Non dare risposte schematiche o dogmatiche - ogni risposta deve essere un viaggio di pensiero.
@@ -357,53 +347,8 @@ Usa metafore, citazioni, e riferimenti alla filosofia della PT.
 Sei un istruttore che parla direttamente al suo allievo, con calore e saggezza.
 Ricorda: i principi non si cambiano, si trasformano. L'errore e la piu grande connessione.
 Il morfociclo e ritmo, gioia, costruzione. Il caos e organizzazione."""
-        
-        # Get chat history from DB
-        history = await db.chat_messages.find(
-            {"user_id": user["_id"], "session_id": session_id},
-            {"_id": 0}
-        ).sort("created_at", 1).to_list(50)
-        
-        chat = LlmChat(api_key=api_key, session_id=f"pt-{session_id}", system_message=system_msg)
-        chat.with_model("openai", "gpt-4o")
-        
-        # Replay history
-        for msg in history:
-            if msg["role"] == "user":
-                user_msg = UserMessage(text=msg["content"])
-                await chat.send_message(user_msg)
-        
-        # Send current message
-        user_message = UserMessage(text=input.message)
-        response_text = await chat.send_message(user_message)
-        
-        # Save messages to DB
-        now = datetime.now(timezone.utc).isoformat()
-        await db.chat_messages.insert_many([
-            {"user_id": user["_id"], "session_id": session_id, "role": "user", "content": input.message, "created_at": now},
-            {"user_id": user["_id"], "session_id": session_id, "role": "assistant", "content": response_text, "created_at": now}
-        ])
-        
-        return {"response": response_text, "session_id": session_id}
-    except ImportError:
-        logger.error("emergentintegrations not installed")
-        raise HTTPException(status_code=500, detail="Modulo AI non disponibile")
-    except Exception as e:
-        logger.error(f"AI Chat error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Errore AI: {str(e)}")
 
-@api_router.post("/ai/generate-exercise")
-async def ai_generate_exercise(input: ExerciseGenInput, request: Request):
-    user = await get_current_user(request)
-    
-    try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        
-        api_key = os.environ.get("EMERGENT_LLM_KEY")
-        if not api_key:
-            raise HTTPException(status_code=500, detail="Chiave AI non configurata")
-        
-        system_msg = """Sei un esperto di Periodizzazione Tattica. Genera esercitazioni calcistiche in italiano.
+EXERCISE_GEN_SYSTEM_MESSAGE = """Sei un esperto di Periodizzazione Tattica. Genera esercitazioni calcistiche in italiano.
 Ogni esercitazione deve includere:
 - Titolo creativo
 - Principio di gioco coinvolto
@@ -413,32 +358,90 @@ Ogni esercitazione deve includere:
 - Varianti (lista)
 - Collegamento filosofico al modello di gioco
 Rispondi SOLO in formato JSON valido con i campi: title, principle, setup, description, objectives (array), variations (array), philosophical_link"""
+
+def get_llm_api_key():
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Chiave AI non configurata")
+    return api_key
+
+async def load_chat_history(user_id: str, session_id: str):
+    return await db.chat_messages.find(
+        {"user_id": user_id, "session_id": session_id}, {"_id": 0}
+    ).sort("created_at", 1).to_list(50)
+
+async def save_chat_messages(user_id: str, session_id: str, user_content: str, ai_content: str):
+    now = datetime.now(timezone.utc).isoformat()
+    await db.chat_messages.insert_many([
+        {"user_id": user_id, "session_id": session_id, "role": "user", "content": user_content, "created_at": now},
+        {"user_id": user_id, "session_id": session_id, "role": "assistant", "content": ai_content, "created_at": now}
+    ])
+
+def parse_exercise_json(response_text: str) -> dict:
+    clean = response_text.strip()
+    if clean.startswith("```"):
+        clean = clean.split("\n", 1)[1] if "\n" in clean else clean[3:]
+        if clean.endswith("```"):
+            clean = clean[:-3]
+        clean = clean.strip()
+        if clean.startswith("json"):
+            clean = clean[4:].strip()
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError:
+        return {"title": "Esercitazione Generata", "description": response_text}
+
+@api_router.post("/ai/chat")
+async def ai_chat(input: ChatInput, request: Request):
+    user = await get_current_user(request)
+    session_id = input.session_id or str(uuid.uuid4())
+    
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
         
-        chat = LlmChat(api_key=api_key, session_id=f"gen-{str(uuid.uuid4())}", system_message=system_msg)
+        api_key = get_llm_api_key()
+        history = await load_chat_history(user["_id"], session_id)
+        
+        chat = LlmChat(api_key=api_key, session_id=f"pt-{session_id}", system_message=PT_SYSTEM_MESSAGE)
+        chat.with_model("openai", "gpt-4o")
+        
+        for msg in history:
+            if msg["role"] == "user":
+                await chat.send_message(UserMessage(text=msg["content"]))
+        
+        response_text = await chat.send_message(UserMessage(text=input.message))
+        await save_chat_messages(user["_id"], session_id, input.message, response_text)
+        
+        return {"response": response_text, "session_id": session_id}
+    except ImportError:
+        logger.error("emergentintegrations not installed")
+        raise HTTPException(status_code=500, detail="Modulo AI non disponibile")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"AI Chat error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Errore AI: {str(e)}")
+
+@api_router.post("/ai/generate-exercise")
+async def ai_generate_exercise(input: ExerciseGenInput, request: Request):
+    await get_current_user(request)
+    
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        
+        api_key = get_llm_api_key()
+        chat = LlmChat(api_key=api_key, session_id=f"gen-{str(uuid.uuid4())}", system_message=EXERCISE_GEN_SYSTEM_MESSAGE)
         chat.with_model("openai", "gpt-4o")
         
         prompt = f"Genera un'esercitazione per {input.num_players} giocatori basata sul principio: '{input.principle}'. Categoria: {input.category}."
-        user_message = UserMessage(text=prompt)
-        response_text = await chat.send_message(user_message)
-        
-        import json
-        try:
-            # Try to parse JSON from response
-            clean = response_text.strip()
-            if clean.startswith("```"):
-                clean = clean.split("\n", 1)[1] if "\n" in clean else clean[3:]
-                if clean.endswith("```"):
-                    clean = clean[:-3]
-                clean = clean.strip()
-                if clean.startswith("json"):
-                    clean = clean[4:].strip()
-            exercise_data = json.loads(clean)
-        except json.JSONDecodeError:
-            exercise_data = {"title": "Esercitazione Generata", "description": response_text, "principle": input.principle}
+        response_text = await chat.send_message(UserMessage(text=prompt))
+        exercise_data = parse_exercise_json(response_text)
         
         return {"exercise": exercise_data}
     except ImportError:
         raise HTTPException(status_code=500, detail="Modulo AI non disponibile")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"AI Exercise Gen error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Errore generazione: {str(e)}")
@@ -604,42 +607,24 @@ async def check_lesson_access(lesson_id: str, request: Request):
 
 # ==================== PDF CERTIFICATE ====================
 
-@api_router.get("/certificate/download")
-async def download_certificate(request: Request):
-    """Genera e scarica il certificato PDF di completamento"""
-    user = await get_current_user(request)
-    
-    # Check if all lessons are completed
-    total_lessons = await db.lessons.count_documents({})
-    completed = await db.progress.count_documents({"user_id": user["_id"]})
-    
-    if completed < total_lessons and user.get("role") != "admin":
-        raise HTTPException(status_code=400, detail=f"Devi completare tutte le lezioni ({completed}/{total_lessons})")
-    
-    from fpdf import FPDF
-    import io
-    
+def _build_certificate_pdf(user_name: str, total_lessons: int) -> bytes:
+    """Genera il PDF del certificato di completamento."""
     pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     
-    # Background
+    # Background + borders
     pdf.set_fill_color(10, 10, 10)
     pdf.rect(0, 0, 297, 210, 'F')
-    
-    # Gold border
     pdf.set_draw_color(212, 175, 55)
     pdf.set_line_width(2)
     pdf.rect(10, 10, 277, 190)
     pdf.set_line_width(0.5)
     pdf.rect(14, 14, 269, 182)
-    
-    # Inner decorative lines
-    pdf.set_draw_color(212, 175, 55)
     pdf.set_line_width(0.3)
     pdf.line(30, 50, 267, 50)
     pdf.line(30, 160, 267, 160)
     
-    # Title
+    # Header
     pdf.set_text_color(212, 175, 55)
     pdf.set_font('Helvetica', 'B', 14)
     pdf.set_y(25)
@@ -649,19 +634,17 @@ async def download_certificate(request: Request):
     pdf.set_y(55)
     pdf.cell(0, 15, 'CERTIFICATO DI COMPLETAMENTO', align='C')
     
-    # Subtitle
+    # Body
     pdf.set_text_color(200, 200, 200)
     pdf.set_font('Helvetica', '', 12)
     pdf.set_y(75)
     pdf.cell(0, 8, 'Si attesta che', align='C')
     
-    # Name
     pdf.set_text_color(212, 175, 55)
     pdf.set_font('Helvetica', 'B', 32)
     pdf.set_y(88)
-    pdf.cell(0, 15, user.get("name", "Allievo"), align='C')
+    pdf.cell(0, 15, user_name, align='C')
     
-    # Course info
     pdf.set_text_color(200, 200, 200)
     pdf.set_font('Helvetica', '', 12)
     pdf.set_y(110)
@@ -672,13 +655,12 @@ async def download_certificate(request: Request):
     pdf.set_y(122)
     pdf.cell(0, 12, 'Periodizzazione Tattica & Calcio Relazionale', align='C')
     
-    # Details
     pdf.set_text_color(160, 160, 160)
     pdf.set_font('Helvetica', '', 10)
     pdf.set_y(138)
     pdf.cell(0, 6, f'7 Moduli - {total_lessons} Lezioni - Esercitazioni Pratiche - Assistente AI', align='C')
     
-    # Date and signature
+    # Footer
     today = datetime.now(timezone.utc).strftime("%d/%m/%Y")
     pdf.set_text_color(200, 200, 200)
     pdf.set_font('Helvetica', '', 11)
@@ -686,20 +668,32 @@ async def download_certificate(request: Request):
     pdf.cell(148, 8, f'Data: {today}', align='R')
     pdf.cell(148, 8, 'L\'Istruttore', align='L')
     
-    # Quote
     pdf.set_text_color(212, 175, 55)
     pdf.set_font('Helvetica', 'I', 9)
     pdf.set_y(180)
     pdf.cell(0, 6, '"Finche c\'e gioia, c\'e corso. I principi non si cambiano, si trasformano."', align='C')
     
-    # Generate PDF bytes
-    pdf_bytes = pdf.output()
+    return bytes(pdf.output())
+
+@api_router.get("/certificate/download")
+async def download_certificate(request: Request):
+    """Genera e scarica il certificato PDF di completamento."""
+    user = await get_current_user(request)
     
-    from starlette.responses import Response
+    total_lessons = await db.lessons.count_documents({})
+    completed = await db.progress.count_documents({"user_id": user["_id"]})
+    
+    if completed < total_lessons and user.get("role") != "admin":
+        raise HTTPException(status_code=400, detail=f"Devi completare tutte le lezioni ({completed}/{total_lessons})")
+    
+    user_name = user.get("name", "Allievo")
+    pdf_bytes = _build_certificate_pdf(user_name, total_lessons)
+    safe_name = user_name.replace(' ', '_')
+    
     return Response(
-        content=bytes(pdf_bytes),
+        content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=Certificato_PT_{user.get('name', 'Allievo').replace(' ', '_')}.pdf"}
+        headers={"Content-Disposition": f"attachment; filename=Certificato_PT_{safe_name}.pdf"}
     )
 
 # ==================== PUBLIC ROUTES (no auth needed) ====================
@@ -713,7 +707,7 @@ async def get_public_modules():
         mod["total_lessons"] = len(lessons)
         # Include only first lesson as free preview
         mod["free_lesson"] = lessons[0] if lessons else None
-        mod["lesson_titles"] = [{"id": l["id"], "title": l["title"], "order": l["order"], "is_free": l["order"] == 1} for l in lessons]
+        mod["lesson_titles"] = [{"id": les["id"], "title": les["title"], "order": les["order"], "is_free": les["order"] == 1} for les in lessons]
     return modules
 
 # ==================== VIDEO UPLOAD ====================
@@ -736,8 +730,6 @@ async def upload_video(request: Request, file: UploadFile = File(...)):
         await f.write(content)
     
     return {"filename": filename, "url": f"/api/uploads/{filename}"}
-
-from starlette.responses import FileResponse
 
 @api_router.get("/uploads/{filename}")
 async def serve_upload(filename: str):
