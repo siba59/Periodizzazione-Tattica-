@@ -761,6 +761,8 @@ async def seed_admin():
 async def seed_content():
     existing_modules = await db.modules.count_documents({})
     if existing_modules > 0:
+        # Check if "Tutta PT a Modo mio" exists, seed it if missing
+        await seed_tutta_pt_from_docx()
         return
     
     logger.info("Seeding moduli e lezioni...")
@@ -775,6 +777,63 @@ async def seed_content():
         await db.exercises.insert_one(ex)
     
     logger.info(f"Seeded {len(MODULES)} moduli e {len(EXERCISES)} esercitazioni")
+    # Also seed the docx module
+    await seed_tutta_pt_from_docx()
+
+async def seed_tutta_pt_from_docx():
+    """Importa il modulo 'Tutta PT a Modo mio' dal file .docx se non esiste."""
+    MODULE_ID = "mod-pt-mio"
+    existing = await db.modules.find_one({"id": MODULE_ID})
+    if existing:
+        return
+    
+    docx_path = Path(__file__).parent / 'tutta_pt.docx'
+    if not docx_path.exists():
+        logger.warning("File tutta_pt.docx non trovato, skip seed")
+        return
+    
+    logger.info("Importazione 'Tutta PT a Modo mio' dal documento...")
+    try:
+        from import_tutta_pt import extract_text_from_docx, split_into_lessons
+        full_text = extract_text_from_docx(docx_path)
+        lessons = split_into_lessons(full_text)
+        
+        if not lessons:
+            logger.error("Nessuna lezione trovata nel documento")
+            return
+        
+        max_order = await db.modules.count_documents({})
+        module_doc = {
+            "id": MODULE_ID,
+            "order": max_order + 1,
+            "title": "Tutta PT a Modo mio",
+            "subtitle": "Il percorso completo — con la voce autentica dell'istruttore",
+            "description": "Il documento integrale del corso di Periodizzazione Tattica e Calcio Relazionale. "
+                          "Sei moduli, dodici lezioni, un'appendice pratica — scritto come un istruttore "
+                          "parla ai suoi allievi: con empatia, profondita e la passione di chi vive il calcio "
+                          "come filosofia di vita.",
+            "icon": "book",
+            "color": "#D4AF37",
+            "is_premium": True
+        }
+        await db.modules.insert_one(module_doc)
+        
+        for i, lesson_data in enumerate(lessons):
+            lesson_doc = {
+                "id": f"les-pt-mio-{str(i+1).zfill(2)}",
+                "module_id": MODULE_ID,
+                "order": i + 1,
+                "title": lesson_data["title"],
+                "content": lesson_data["content"],
+                "video_url": "",
+                "video_type": "none",
+                "duration_minutes": max(15, len(lesson_data["content"]) // 500)
+            }
+            await db.lessons.insert_one(lesson_doc)
+        
+        logger.info(f"Importate {len(lessons)} lezioni in 'Tutta PT a Modo mio'")
+    except Exception as e:
+        logger.error(f"Errore importazione docx: {e}")
 
 async def create_indexes():
     await db.users.create_index("email", unique=True)
