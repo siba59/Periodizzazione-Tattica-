@@ -611,8 +611,15 @@ def _build_certificate_pdf(user_name: str, total_lessons: int) -> bytes:
     """Genera il PDF del certificato di completamento."""
     pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
-    
-    # Background + borders
+    _draw_certificate_background(pdf)
+    _draw_certificate_header(pdf)
+    _draw_certificate_body(pdf, user_name, total_lessons)
+    _draw_certificate_footer(pdf)
+    return bytes(pdf.output())
+
+
+def _draw_certificate_background(pdf: FPDF) -> None:
+    """Disegna sfondo e bordi del certificato."""
     pdf.set_fill_color(10, 10, 10)
     pdf.rect(0, 0, 297, 210, 'F')
     pdf.set_draw_color(212, 175, 55)
@@ -623,57 +630,60 @@ def _build_certificate_pdf(user_name: str, total_lessons: int) -> bytes:
     pdf.set_line_width(0.3)
     pdf.line(30, 50, 267, 50)
     pdf.line(30, 160, 267, 160)
-    
-    # Header
+
+
+def _draw_certificate_header(pdf: FPDF) -> None:
+    """Disegna intestazione del certificato."""
     pdf.set_text_color(212, 175, 55)
     pdf.set_font('Helvetica', 'B', 14)
     pdf.set_y(25)
     pdf.cell(0, 10, 'ACCADEMIA ALLENATORI', align='C')
-    
     pdf.set_font('Helvetica', '', 28)
     pdf.set_y(55)
     pdf.cell(0, 15, 'CERTIFICATO DI COMPLETAMENTO', align='C')
-    
-    # Body
+
+
+def _draw_certificate_body(pdf: FPDF, user_name: str, total_lessons: int) -> None:
+    """Disegna corpo centrale del certificato."""
     pdf.set_text_color(200, 200, 200)
     pdf.set_font('Helvetica', '', 12)
     pdf.set_y(75)
     pdf.cell(0, 8, 'Si attesta che', align='C')
-    
+
     pdf.set_text_color(212, 175, 55)
     pdf.set_font('Helvetica', 'B', 32)
     pdf.set_y(88)
     pdf.cell(0, 15, user_name, align='C')
-    
+
     pdf.set_text_color(200, 200, 200)
     pdf.set_font('Helvetica', '', 12)
     pdf.set_y(110)
     pdf.cell(0, 8, 'ha completato con successo il percorso formativo', align='C')
-    
+
     pdf.set_text_color(212, 175, 55)
     pdf.set_font('Helvetica', 'B', 18)
     pdf.set_y(122)
     pdf.cell(0, 12, 'Periodizzazione Tattica & Calcio Relazionale', align='C')
-    
+
     pdf.set_text_color(160, 160, 160)
     pdf.set_font('Helvetica', '', 10)
     pdf.set_y(138)
     pdf.cell(0, 6, f'7 Moduli - {total_lessons} Lezioni - Esercitazioni Pratiche - Assistente AI', align='C')
-    
-    # Footer
+
+
+def _draw_certificate_footer(pdf: FPDF) -> None:
+    """Disegna pie di pagina del certificato."""
     today = datetime.now(timezone.utc).strftime("%d/%m/%Y")
     pdf.set_text_color(200, 200, 200)
     pdf.set_font('Helvetica', '', 11)
     pdf.set_y(165)
     pdf.cell(148, 8, f'Data: {today}', align='R')
     pdf.cell(148, 8, 'L\'Istruttore', align='L')
-    
+
     pdf.set_text_color(212, 175, 55)
     pdf.set_font('Helvetica', 'I', 9)
     pdf.set_y(180)
     pdf.cell(0, 6, '"Finche c\'e gioia, c\'e corso. I principi non si cambiano, si trasformano."', align='C')
-    
-    return bytes(pdf.output())
 
 @api_router.get("/certificate/download")
 async def download_certificate(request: Request):
@@ -782,9 +792,8 @@ async def seed_content():
 
 async def seed_tutta_pt_from_docx():
     """Importa il modulo 'Tutta PT a Modo mio' dal file .docx se non esiste."""
-    MODULE_ID = "mod-pt-mio"
-    existing = await db.modules.find_one({"id": MODULE_ID})
-    if existing:
+    pt_module_id = "mod-pt-mio"
+    if await db.modules.find_one({"id": pt_module_id}):
         return
     
     docx_path = Path(__file__).parent / 'tutta_pt.docx'
@@ -794,46 +803,28 @@ async def seed_tutta_pt_from_docx():
     
     logger.info("Importazione 'Tutta PT a Modo mio' dal documento...")
     try:
-        from import_tutta_pt import extract_text_from_docx, split_into_lessons
-        full_text = extract_text_from_docx(docx_path)
-        lessons = split_into_lessons(full_text)
-        
-        if not lessons:
-            logger.error("Nessuna lezione trovata nel documento")
-            return
-        
-        max_order = await db.modules.count_documents({})
-        module_doc = {
-            "id": MODULE_ID,
-            "order": max_order + 1,
-            "title": "Tutta PT a Modo mio",
-            "subtitle": "Il percorso completo — con la voce autentica dell'istruttore",
-            "description": "Il documento integrale del corso di Periodizzazione Tattica e Calcio Relazionale. "
-                          "Sei moduli, dodici lezioni, un'appendice pratica — scritto come un istruttore "
-                          "parla ai suoi allievi: con empatia, profondita e la passione di chi vive il calcio "
-                          "come filosofia di vita.",
-            "icon": "book",
-            "color": "#D4AF37",
-            "is_premium": True
-        }
-        await db.modules.insert_one(module_doc)
-        
-        for i, lesson_data in enumerate(lessons):
-            lesson_doc = {
-                "id": f"les-pt-mio-{str(i+1).zfill(2)}",
-                "module_id": MODULE_ID,
-                "order": i + 1,
-                "title": lesson_data["title"],
-                "content": lesson_data["content"],
-                "video_url": "",
-                "video_type": "none",
-                "duration_minutes": max(15, len(lesson_data["content"]) // 500)
-            }
-            await db.lessons.insert_one(lesson_doc)
-        
-        logger.info(f"Importate {len(lessons)} lezioni in 'Tutta PT a Modo mio'")
+        await _import_docx_module(docx_path, pt_module_id)
     except Exception as e:
         logger.error(f"Errore importazione docx: {e}")
+
+
+async def _import_docx_module(docx_path: Path, module_id: str):
+    """Esegue l'importazione del documento nel database."""
+    from import_tutta_pt import extract_text_from_docx, split_into_lessons, _build_module_doc, _build_lesson_doc
+    
+    full_text = extract_text_from_docx(docx_path)
+    lessons = split_into_lessons(full_text)
+    if not lessons:
+        logger.error("Nessuna lezione trovata nel documento")
+        return
+    
+    max_order = await db.modules.count_documents({})
+    await db.modules.insert_one(_build_module_doc(max_order + 1))
+    
+    for i, lesson_data in enumerate(lessons):
+        await db.lessons.insert_one(_build_lesson_doc(i, lesson_data))
+    
+    logger.info(f"Importate {len(lessons)} lezioni in 'Tutta PT a Modo mio'")
 
 async def create_indexes():
     await db.users.create_index("email", unique=True)
