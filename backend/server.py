@@ -397,25 +397,31 @@ async def ai_chat(input: ChatInput, request: Request):
     session_id = input.session_id or str(uuid.uuid4())
     
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        
         api_key = get_llm_api_key()
         history = await load_chat_history(user["_id"], session_id)
         
-        chat = LlmChat(api_key=api_key, session_id=f"pt-{session_id}", system_message=PT_SYSTEM_MESSAGE)
-        chat.with_model("openai", "gpt-4o")
-        
+        messages = [{"role": "system", "content": PT_SYSTEM_MESSAGE}]
         for msg in history:
-            if msg["role"] == "user":
-                await chat.send_message(UserMessage(text=msg["content"]))
+            messages.append({"role": msg["role"], "content": msg["content"]})
+        messages.append({"role": "user", "content": input.message})
         
-        response_text = await chat.send_message(UserMessage(text=input.message))
+        # Try emergentintegrations first (Emergent platform), fall back to openai
+        try:
+            from emergentintegrations.llm.chat import LlmChat, UserMessage
+            chat = LlmChat(api_key=api_key, session_id=f"pt-{session_id}", system_message=PT_SYSTEM_MESSAGE)
+            chat.with_model("openai", "gpt-4o")
+            for msg in history:
+                if msg["role"] == "user":
+                    await chat.send_message(UserMessage(text=msg["content"]))
+            response_text = await chat.send_message(UserMessage(text=input.message))
+        except ImportError:
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key)
+            completion = client.chat.completions.create(model="gpt-4o", messages=messages)
+            response_text = completion.choices[0].message.content
+        
         await save_chat_messages(user["_id"], session_id, input.message, response_text)
-        
         return {"response": response_text, "session_id": session_id}
-    except ImportError:
-        logger.error("emergentintegrations not installed")
-        raise HTTPException(status_code=500, detail="Modulo AI non disponibile")
     except HTTPException:
         raise
     except Exception as e:
@@ -427,19 +433,28 @@ async def ai_generate_exercise(input: ExerciseGenInput, request: Request):
     await get_current_user(request)
     
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        
         api_key = get_llm_api_key()
-        chat = LlmChat(api_key=api_key, session_id=f"gen-{str(uuid.uuid4())}", system_message=EXERCISE_GEN_SYSTEM_MESSAGE)
-        chat.with_model("openai", "gpt-4o")
-        
         prompt = f"Genera un'esercitazione per {input.num_players} giocatori basata sul principio: '{input.principle}'. Categoria: {input.category}."
-        response_text = await chat.send_message(UserMessage(text=prompt))
-        exercise_data = parse_exercise_json(response_text)
         
+        try:
+            from emergentintegrations.llm.chat import LlmChat, UserMessage
+            chat = LlmChat(api_key=api_key, session_id=f"gen-{str(uuid.uuid4())}", system_message=EXERCISE_GEN_SYSTEM_MESSAGE)
+            chat.with_model("openai", "gpt-4o")
+            response_text = await chat.send_message(UserMessage(text=prompt))
+        except ImportError:
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key)
+            completion = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": EXERCISE_GEN_SYSTEM_MESSAGE},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            response_text = completion.choices[0].message.content
+        
+        exercise_data = parse_exercise_json(response_text)
         return {"exercise": exercise_data}
-    except ImportError:
-        raise HTTPException(status_code=500, detail="Modulo AI non disponibile")
     except HTTPException:
         raise
     except Exception as e:
